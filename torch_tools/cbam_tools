@@ -1,0 +1,67 @@
+import torch
+import torch.nn as nn
+import torch.nn.parallel
+import torch.nn.functional as F
+import torch.backends.cudnn as cudnn
+import torch.optim
+import torch.utils.data
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
+import torchvision.models as models
+
+class FrameAttention(nn.Module): #通道注意力机制
+    def __init__(self, nframe=5):
+        super(FrameAttention, self).__init__()
+        self.fc1 = nn.Conv2d(nframe, nframe//2, 1) # nFrame个图片的全连接，即channel从nFrame变成hidden,卷积等于全连接
+        self.relu1 = nn.ReLU()
+        self.fc2   = nn.Conv2d(nframe//2, nframe, 1, bias=False)
+        self.sigmoid = nn.Sigmoid()
+        self.dropout = nn.Dropout(p=0.2)
+
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)  #   （2,3,5,5)-> (2,3,1,1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+
+    def forward(self, x):
+        print("x", x.shape)  # (32,768,8,8)
+        avg = self.fc1(self.avg_pool(x)) # BN*nFrame，每个frame学一个特征
+        avg = self.dropout(avg)
+        avg_out = self.fc2(self.relu1(avg))
+
+        max_ = self.fc1(self.max_pool(x))
+        max_ = self.dropout(max_)
+        max_out = self.fc2(self.relu1(max_))
+
+        out = avg_out + max_out
+        return self.sigmoid(out)
+
+class SpatialAttention(nn.Module):
+    '''
+    不同channel对应的同一位置取平均和取max
+    '''
+    def __init__(self, kernel_size=3):
+        super(SpatialAttention, self).__init__()
+
+        #assert kernel_size in (3, 7), 'kernel size must be 3 or 7'
+        padding = 3 if kernel_size == 7 else 1
+
+
+        self.conv1 = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
+        self.bn1 = nn.BatchNorm2d(1)
+        self.sigmoid = nn.Sigmoid()
+        self.dropout2d = nn.Dropout2d(p=0.5, inplace=False)
+
+    def forward(self, x):
+        x = self.dropout2d(x)
+
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        x = torch.cat([avg_out, max_out], dim=1) # Batch*2*8*8
+
+        x = self.conv1(x)
+        #x = self.bn1(x)
+
+        return self.sigmoid(x)
+
+
+if __name__=='__main__':
+    print(1)
